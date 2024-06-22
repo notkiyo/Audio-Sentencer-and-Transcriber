@@ -1,58 +1,168 @@
-# Audio-Sentencer-and-Transcriber
-This repository contains a Python script that processes audio files by splitting them into sentences based on pauses and generates transcriptions using the Vosk model. The main functionalities include:
+# Python Sentencer: Audio Sentence Segmentation and Transcription
 
-##  Read Me: Audio Sentence Segmentation and Transcription
+## Overview
 
-This Python script automates speech-to-text conversion by segmenting audio files into sentences and utilizing the Vosk model for speech recognition.
+**Python Sentencer** is a Python script designed to process audio files by segmenting them into sentences based on pauses. It uses the Vosk speech recognition model to transcribe the audio and generate subtitles. The tool is ideal for applications in creating audiobooks, podcasts, and other spoken content requiring precise audio segmentation and transcription.
 
-### Functionalities
+## Features
 
-* **Audio Processing:** Reads audio files (likely WAV format) and splits them into segments based on pauses in speech.
-* **Sentence Segmentation:** Analyzes silence duration and audio properties to identify sentence boundaries.
-* **Vosk Integration:** Integrates the Vosk speech recognition model for transcribing each audio segment.
-* **Transcription Generation:** Combines transcribed text from each segment to form the complete audio transcription.
-* **Output Management:** Saves generated transcriptions to text files (customizable).
+- **Sentence-based Audio Segmentation**: Cuts audio at sentence boundaries based on pauses detected in the speech.
+- **Transcription**: Uses the Vosk speech recognition model to generate text transcriptions of the audio.
+- **Subtitle Creation**: Generates subtitle files compatible with most video players.
 
-### Dependencies
+## Requirements
 
-This script likely relies on the following external libraries:
+- Python 3.6 or later
+- `vosk` library
+- `pydub` library
+- `numpy` library
+- Audio file in WAV format
 
-* **Vosk:** Offline, lightweight speech recognition toolkit ([https://alphacephei.com/vosk/](https://alphacephei.com/vosk/))
-* **Additional Libraries (Optional):**
-    * `pydub` for audio processing ([https://github.com/jiaaro/pydub](https://github.com/jiaaro/pydub))
+## Installation
 
-**Installation:**
+1. Install the required Python libraries:
+
+   ```bash
+   pip install vosk pydub numpy
+   ```
+
+2. Download a Vosk model (e.g., `vosk-model-small-en-us-0.15`) from the [Vosk models page](https://alphacephei.com/vosk/models) and extract it to a directory of your choice.
+
+## Usage
+
+1. **Prepare the Audio File**: Ensure your audio file is in WAV format. You can use tools like `ffmpeg` to convert other audio formats to WAV.
+
+2. **Run the Script**: Execute the script with the required arguments.
+
+   ```bash
+   python sentencer.py --audio_file path/to/audio.wav --model_dir path/to/vosk-model
+   ```
+
+### Command-Line Arguments
+
+- `--audio_file`: Path to the input audio file (in WAV format).
+- `--model_dir`: Path to the directory containing the Vosk model.
+
+### Example
 
 ```bash
-pip install vosk  #  and optionally pydub
+python sentencer.py --audio_file my_audio.wav --model_dir vosk-model-small-en-us-0.15
 ```
 
-**Download Vosk Model Files:**
+## Script Details
 
-Download the appropriate Vosk model for your desired language from the Vosk website and place it in a known location. You'll need the path to this model file during script execution.
+### 1. Audio Segmentation
 
-### Usage
+The script uses `pydub` to process the audio file, detecting pauses to identify sentence boundaries. It then segments the audio file accordingly.
 
-1.  **Modify Script:** (Optional)
-    * Update the script to specify the path to your downloaded Vosk model file.
-    * Adjust output behavior (e.g., filename format) for generated transcription files (if applicable).
+### 2. Transcription
 
-2. **Run Script:**
-    * Execute the script using Python with the audio file path as an argument:
+The Vosk speech recognition model transcribes each segment of the audio, generating a textual representation of the speech.
 
-```bash
-python script_name.py path/to/your/audio.wav
+### 3. Subtitle Generation
+
+Based on the transcription, the script generates a subtitle file (e.g., in SRT format), which can be used in video players for synchronized text display.
+
+## Example Script
+
+Here's an example implementation of the `sentencer.py` script:
+
+```python
+import os
+import wave
+import json
+import argparse
+from vosk import Model, KaldiRecognizer
+from pydub import AudioSegment
+import numpy as np
+
+def transcribe_audio(audio_path, model_dir):
+    wf = wave.open(audio_path, "rb")
+    model = Model(model_dir)
+    rec = KaldiRecognizer(model, wf.getframerate())
+    rec.SetWords(True)
+
+    results = []
+    while True:
+        data = wf.readframes(4000)
+        if len(data) == 0:
+            break
+        if rec.AcceptWaveform(data):
+            results.append(json.loads(rec.Result()))
+        else:
+            results.append(json.loads(rec.PartialResult()))
+    results.append(json.loads(rec.FinalResult()))
+    return results
+
+def segment_audio(audio_path, segments):
+    audio = AudioSegment.from_wav(audio_path)
+    for i, (start, end) in enumerate(segments):
+        segment = audio[start:end]
+        segment.export(f"segment_{i}.wav", format="wav")
+
+def generate_subtitles(transcription, output_file="subtitles.srt"):
+    with open(output_file, "w") as f:
+        for i, result in enumerate(transcription):
+            if "result" in result:
+                words = result["result"]
+                start_time = words[0]["start"]
+                end_time = words[-1]["end"]
+                text = " ".join([w["word"] for w in words])
+                f.write(f"{i+1}\n")
+                f.write(f"{format_timestamp(start_time)} --> {format_timestamp(end_time)}\n")
+                f.write(f"{text}\n\n")
+
+def format_timestamp(seconds):
+    ms = int((seconds % 1) * 1000)
+    s = int(seconds)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    return f"{h:02}:{m:02}:{s:02},{ms:03}"
+
+def main(audio_file, model_dir):
+    # Step 1: Transcription
+    transcription = transcribe_audio(audio_file, model_dir)
+
+    # Step 2: Identify sentence boundaries (simple heuristic based on pauses)
+    segments = []
+    segment_start = 0
+    for result in transcription:
+        if "result" in result:
+            words = result["result"]
+            for i in range(1, len(words)):
+                if words[i]["start"] - words[i-1]["end"] > 1.0:  # Pause longer than 1 second
+                    segment_end = int(words[i-1]["end"] * 1000)
+                    segments.append((segment_start, segment_end))
+                    segment_start = int(words[i]["start"] * 1000)
+            segment_end = int(words[-1]["end"] * 1000)
+    segments.append((segment_start, segment_end))
+
+    # Step 3: Segment the audio
+    segment_audio(audio_file, segments)
+
+    # Step 4: Generate subtitles
+    generate_subtitles(transcription)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Segment audio into sentences and generate transcription.")
+    parser.add_argument("--audio_file", required=True, help="Path to the input audio file (WAV format).")
+    parser.add_argument("--model_dir", required=True, help="Path to the Vosk model directory.")
+    args = parser.parse_args()
+    main(args.audio_file, args.model_dir)
 ```
 
-**Example Output:**
+## License
 
-The script will likely generate a text file containing the transcribed text from the audio file, potentially segmented by sentences (depending on implementation).
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
+## Contributing
 
-### Additional Notes
+Contributions are welcome! Please feel free to submit a Pull Request or open an Issue on the GitHub repository.
 
-* This is a general overview based on the information provided. The specific functionalities and libraries used might vary depending on the script's implementation.
-* Consider including instructions on how to handle errors or exceptions encountered during execution.
+## Contact
 
+For any questions or inquiries, please contact [Your Name] at [your-email@example.com].
 
-For further details and customization options, consult the script's source code directly.
+---
+
+This README provides an overview of the Python Sentencer script, including its features, requirements, usage instructions, and example code. For further details and updates, please refer to the project's GitHub repository.
